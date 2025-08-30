@@ -1,11 +1,4 @@
-# Write an improved, faster version of index.html that:
-# - Adds EX TAD tab
-# - Speeds up data loading (parallel proxy fetch with Promise.any, shorter timeouts)
-# - Always hides the loader even on error and shows a visible warning
-# - Improves error messages and UX on GitHub Pages
-# Save to /mnt/data/index-fast.html
-
-html = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="utf-8"/>
@@ -787,9 +780,3 @@ document.getElementById('download').addEventListener('click',()=>{
 </script>
 </body>
 </html>
-"""
-
-with open("/mnt/data/index-fast.html", "w", encoding="utf-8") as f:
-    f.write(html)
-
-"/mnt/data/index-fast.html"
