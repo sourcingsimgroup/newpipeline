@@ -1,9 +1,18 @@
-<!DOCTYPE html>
+# Write an improved, faster version of index.html that:
+# - Adds EX TAD tab
+# - Speeds up data loading (parallel proxy fetch with Promise.any, shorter timeouts)
+# - Always hides the loader even on error and shows a visible warning
+# - Improves error messages and UX on GitHub Pages
+# Save to /mnt/data/index-fast.html
+
+html = r"""<!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>THE PIPELINE - FLK</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root{ --brand:#3F704D; --bg:#fff; --ink:#212121; --muted:#f3f4f6; --line:#e5e7eb; --danger:#d72638; --gray:#9ca3af; --head-bg:#222624; --head-fg:#e1e8e5; --name-col-w:260px;}
@@ -135,6 +144,7 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
 .auth-hint{margin-top:8px;color:#64748b;font-size:11px}
 .userbox{display:none;align-items:center;gap:8px}
 .userbox .uname{font-size:12px;background:#111827;color:#e5e7eb;padding:6px 10px;border-radius:9999px}
+.notice{display:none;margin:12px 16px;padding:10px 12px;border-radius:12px;background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;font-size:12px}
 </style>
 </head>
 <body>
@@ -172,7 +182,6 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
       <p class="subtitle">create &amp; develop by sourcing department</p>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
-      <!-- USER BOX + LOGOUT (muncul setelah login) -->
       <div id="userBox" class="userbox">
         <span class="uname">👋 <b id="usernameLabel"></b></span>
         <button id="btnLogout" class="btn danger" title="Keluar">Logout</button>
@@ -192,7 +201,7 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
   </div>
 </header>
 
-<div id="dsCheck" style="display:none;padding:8px 16px;font:12px/1.4 Montserrat,Arial;background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;margin:12px 16px"></div>
+<div id="dsCheck" class="notice"></div>
 
 <main class="app">
   <div class="layout">
@@ -296,29 +305,24 @@ const USERS = [
   { u: 'rizkia', p: 'regional2', name: 'Rizkia' },
   { u: 'maulana', p: 'regional3', name: 'Maulana' },
   { u: 'anindya', p: 'regional1', name: 'Anindya' },
-  // Tambahkan user lain di sini: { u:'username', p:'password', name:'Nama tampilan' },
 ];
 
 let DATA_LOADED = false;
 
 function showAuth(){
   document.getElementById('auth').style.display='grid';
-  // jangan tampilkan loader saat menunggu login
   const ld=document.getElementById('loader'); if(ld){ ld.style.display='none'; }
 }
 function onLogin(skipBoot=false){
   const sess = JSON.parse(localStorage.getItem('pipeline_user')||'{}');
-  // tampilkan identitas + tombol logout
   const box=document.getElementById('userBox');
   const name = USERS.find(x=>x.u===sess.u)?.name || sess.u || 'User';
   document.getElementById('usernameLabel').textContent = name;
   box.style.display='flex';
-  // load data kalau belum
   if(!skipBoot || !DATA_LOADED){
     showLoader();
     boot(CURRENT_DS);
   }
-  // tutup overlay login
   document.getElementById('auth').style.display='none';
 }
 function isValid(u,p){ return USERS.some(x=>x.u===u && x.p===p); }
@@ -348,58 +352,59 @@ document.getElementById('btnLogout').addEventListener('click',()=>{
   location.reload();
 });
 
-/* ========= Data Source =========
-   Menggunakan endpoint GVIZ CSV (tqx=out:csv) + nama sheet "Responses".
-   Pastikan tiap spreadsheet diset "Anyone with the link: Viewer".
-*/
+/* ========= Data Source ========= */
 const DS = {
   nasional:{label:"Nasional", id:"1cRKdIFwWuHauauIZsJ7_nrzSjygh7PCNhLFXuIm5b3g", sheets:["Responses","Form Responses 1","Sheet1"]},
   lokerin: {label:"Lokerin",  id:"1wz7lhujZmstivyfGQdtY3J5DdFI0ZLmAy1BFKnbkxlc", sheets:["Responses","Form Responses 1","Sheet1"]},
   onsite:  {label:"Onsite",   id:"1WR-rRDjWLzSB-Mdiie25L_TRzoer6cM2Q42Hwfa2Whw", sheets:["Responses","Form Responses 1","Sheet1"]},
   adira:   {label:"Adira",    id:"15SNy2D_bfkenZPvCHo9DG9dSgqLhwHQ4B3fzrmzTaiE", sheets:["Responses","Form Responses 1","Sheet1"]},
-  extad:   {label:"EX TAD",   id:"1MpZvsXCJcQWrw6SkpvM9wgPlSXdxjnDRcOfV7dJ_BgE", sheets:["Responses","Form Responses 1","Sheet1"]}, // ✅ Tambahan EX TAD
+  extad:   {label:"EX TAD",   id:"1MpZvsXCJcQWrw6SkpvM9wgPlSXdxjnDRcOfV7dJ_BgE", sheets:["Responses","Form Responses 1","Sheet1"]},
 };
 
-/* ====== PROXY & FETCH yang lebih tahan banting ====== */
+/* ====== PROXY & FETCH (lebih cepat) ====== */
 const WRAPS = [
   u => u,
-  u => 'https://r.jina.ai/http://' + u.replace(/^https?:\\/\\//,''),
+  u => 'https://cors.isomorphic-git.org/' + u,
   u => 'https://r.jina.ai/http/'  + u.replace(/^https?:\\/\\//,''),
-  u => 'https://cors.isomorphic-git.org/' + u
+  u => 'https://r.jina.ai/http://' + u.replace(/^https?:\\/\\//,'')
 ];
-const FETCH_TIMEOUT_MS = 7500;
-function looksLikeHtml(text){ return /<\\s*html|<!doctype/i.test(text); }
-function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+const FETCH_TIMEOUT_MS = 4500; // lebih pendek biar tidak kelamaan menunggu
+function looksLikeHtml(text){ return /<\\s*html|<!doctype|<\\s*title>/i.test(text); }
 async function fetchWithTimeout(url, opt={}, ms=FETCH_TIMEOUT_MS){
   const ctrl = new AbortController();
   const id = setTimeout(()=>ctrl.abort(), ms);
   try{ const res = await fetch(url, { ...opt, signal: ctrl.signal, cache:'no-store', redirect:'follow' }); return res; }
   finally{ clearTimeout(id); }
 }
-async function tryFetchCsv(url){
-  let lastErr = null;
-  for(const wrap of WRAPS){
-    const full = wrap(url) + (wrap===WRAPS[3] ? '' : (url.includes('?')?'&':'?') + '_=' + Date.now());
-    try{
-      const r = await fetchWithTimeout(full);
-      if(!r.ok) { lastErr = new Error('HTTP ' + r.status); continue; }
-      const text = await r.text();
-      if(!text || looksLikeHtml(text)) { lastErr = new Error('Bukan CSV (mungkin belum dibuka akses publik)'); continue; }
-      return text.replace(/^\\uFEFF/, '');
-    }catch(e){ lastErr = e; }
-  }
-  throw lastErr || new Error('Gagal ambil CSV');
-}
+function addBust(u){ return u + (u.includes('?')?'&':'?') + '_=' + Date.now(); }
 const gvizCsv = (id, sheet) => `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}`;
 
-/* Kolom yang ditampilkan di tabel */
+async function tryFetchCsvFast(url){
+  const attempts = WRAPS.map(w => (async ()=>{
+    const full = addBust(w(url));
+    const r = await fetchWithTimeout(full);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const text = await r.text();
+    if(!text || looksLikeHtml(text)) throw new Error('Bukan CSV (mungkin belum public)');
+    return text.replace(/^\\uFEFF/, '');
+  })());
+  // Promise.any polyfill
+  if (typeof Promise.any === 'function') {
+    return await Promise.any(attempts);
+  }
+  return await new Promise((resolve,reject)=>{
+    let rejected=0, errs=[];
+    attempts.forEach(p=>p.then(resolve, e=>{errs.push(e); if(++rejected===attempts.length) reject(errs[0]);}));
+  });
+}
+
+/* Kolom tabel */
 const TABLE_DISPLAY_COLUMNS=[
   "NAMA LENGKAP","TANGGAL LAHIR","NOMOR WA AKTIF","NOMOR HP AKTIF","JENIS KELAMIN",
   "PENGALAMAN KERJA TERAKHIR","DURASI PENGALAMAN KERJA","MINAT POSISI KERJA PERTAMA",
   "PENDIDIKAN TERAKHIR","KEPEMILIKAN KENDARAAN","ALAMAT DOMISILI","KECAMATAN","KELURAHAN",
   "PROVINSI MINAT PENEMPATAN","KOTA MINAT PENEMPATAN","UPLOAD CV"
 ];
-/* Kolom untuk export */
 const EXPORT_COLUMNS=[
   "TIMESTAMP","EMAIL AKTIF","SUMBER INFORMASI LOWONGAN","NAMA LENGKAP","TANGGAL LAHIR",
   "NOMOR WA AKTIF","NOMOR HP AKTIF","JENIS KELAMIN","PENGALAMAN KERJA TERAKHIR","DURASI PENGALAMAN KERJA",
@@ -413,7 +418,6 @@ const FILTER_MAP={
   peng:"PENGALAMAN KERJA TERAKHIR",pend:"PENDIDIKAN TERAKHIR",prov:"PROVINSI MINAT PENEMPATAN",kota:"KOTA MINAT PENEMPATAN",
   durasi:"DURASI PENGALAMAN KERJA"
 };
-/* Aliases & synonyms */
 const ALIASES={"NAMA LENGKAP":"NAMA LENGKAP (SESUAI KTP)","TIMESTAMP":"Timestamp","UPLOAD CV":"UPLOAD CV / PORTOFOLIO"};
 const SYNONYMS={
  "NAMA LENGKAP":["NAMA LENGKAP (SESUAI KTP)","NAMA LENGKAP"],
@@ -444,7 +448,6 @@ let MULTI={month:new Set(),day:new Set(),minat:new Set(),peng:new Set(),pend:new
 let JOB_OPTS=[];
 
 const $=s=>document.querySelector(s);
-/* normalize kuat */
 const norm=s=>String(s||"").replace(/[\\u200B-\\u200D\\uFEFF]/g,"").toUpperCase().replace(/\\s+/g," ").trim();
 const mapHeader=name=> NAME_MAP[norm(name)] || NAME_MAP[norm(ALIASES[name]||"")] || name;
 const get=(row,label)=>{ const actual = COL_MAP[label] || mapHeader(label); return row[ actual ] ?? ""; };
@@ -452,7 +455,7 @@ const get=(row,label)=>{ const actual = COL_MAP[label] || mapHeader(label); retu
 /* Utils */
 function hideLoader(){const el=$("#loader");if(!el) return;el.style.opacity="0";el.style.transition="opacity .25s ease";setTimeout(()=>{el.style.display="none";document.body.classList.add("ready");},250)}
 function showLoader(){const el=$("#loader"); if(!el) return; document.body.classList.remove('ready'); el.style.display='flex'; el.style.opacity='1';}
-function showLoaderError(msg){$("#loader-sub").textContent=msg||"Gagal memuat data."}
+function showNotice(msg){const box=$("#dsCheck"); box.textContent=msg||""; box.style.display=msg?"block":"none";}
 function uniqueNumbers(arr){return [...new Set(arr)].sort((a,b)=>a-b)}
 function listPreview(arr){if(arr.length<=2) return arr.join(", ");return arr.slice(0,2).join(", ") + ` +${arr.length-2}`}
 function parseDateParts(s){ if(!s) return null; const d=new Date(s); if(!isNaN(d)) return {y:d.getFullYear(),m:d.getMonth()+1,d:d.getDate()}; const m=String(s).match(/(\\d{1,2})[\\/\\-](\\d{1,2})[\\/\\-](\\d{2,4})/); if(m){let a=+m[1],b=+m[2],y=+m[3]; if(y<100) y+=2000; return (a>12)?{y,m:b,d:a}:{y,m:a,d:b};} return null; }
@@ -484,13 +487,7 @@ function buildColMap(){
     if(target){ COL_MAP[label] = target; }
   });
   const unresolved = TABLE_DISPLAY_COLUMNS.filter(lbl=>!COL_MAP[lbl]);
-  const box=document.getElementById('dsCheck');
-  if(unresolved.length && box){
-    box.style.display='block';
-    box.innerHTML = `<div style="margin-top:8px;padding:6px;border-radius:8px;background:#fff;border:1px dashed #f59e0b">
-      <b>Peringatan kolom belum cocok:</b> ${unresolved.join(", ")}
-    </div>`;
-  }
+  if(unresolved.length){ showNotice(`Peringatan kolom belum cocok: ${unresolved.join(", ")}`); }
 }
 
 /* ===== UI ===== */
@@ -661,8 +658,17 @@ $("#jobInput").addEventListener('input',()=>{ const v=$("#jobInput").value.trim(
 $("#jobClear").addEventListener('click',()=>{ MULTI.searchJobs.clear(); $("#jobInput").value=''; updateJobSearchLabel(); recalc(); });
 
 /* ===== Stats / render ===== */
-function isFreshGraduate(r){const dur=String(get(r,FILTER_MAP.durasi)).toLowerCase(), peng=String(get(r,FILTER_MAP.peng)).toLowerCase(), t=dur+" "+peng; if(/fresh\\s*graduate|freshgrad|fresh\\b/.test(t)) return true; if(/belum.*pengalaman|tanpa.*pengalaman|no.*experience/.test(t)) return true; const m=dur.match(/(\\d+(?:[.,]\\d+)?)/); if(m){const v=parseFloat(m[1].replace(',','.')); if(v===0) return true; if(v>0) return false;} if(!dur.trim() && (!peng.trim() || /-+|tidak|belum/.test(peng))) return true; return false;}
-function renderStats(rows){const total=rows.length; let fresh=0; rows.forEach(r=>{if(isFreshGraduate(r)) fresh++;}); const exp=total-fresh; $("#stat-total").textContent=total.toLocaleString('id-ID'); $("#stat-fresh").textContent=fresh.toLocaleString('id-ID'); $("#stat-exp").textContent=exp.toLocaleString('id-ID');}
+function isFreshGraduate(r){
+  const dur=String(get(r,FILTER_MAP.durasi)).toLowerCase(), peng=String(get(r,FILTER_MAP.peng)).toLowerCase(), t=dur+" "+peng;
+  if(/fresh\\s*graduate|freshgrad|fresh\\b/.test(t)) return true;
+  if(/belum.*pengalaman|tanpa.*pengalaman|no.*experience/.test(t)) return true;
+  const m=dur.match(/(\\d+(?:[.,]\\d+)?)/); if(m){const v=parseFloat(m[1].replace(',','.')); if(v===0) return true; if(v>0) return false;}
+  if(!dur.trim() && (!peng.trim() || /-+|tidak|belum/.test(peng))) return true; return false;
+}
+function renderStats(rows){
+  const total=rows.length; let fresh=0; rows.forEach(r=>{if(isFreshGraduate(r)) fresh++;}); const exp=total-fresh;
+  $("#stat-total").textContent=total.toLocaleString('id-ID'); $("#stat-fresh").textContent=fresh.toLocaleString('id-ID'); $("#stat-exp").textContent=exp.toLocaleString('id-ID');
+}
 function updatePageMini(total){const pages=Math.max(1,Math.ceil(total/PAGE_SIZE)); const el=$("#pageMini"); if(el) el.textContent=`${page+1} of ${pages} halaman`;}
 function showTable(show){ $("#grid").style.display = show?'table':'none'; $("#empty").style.display = show?'none':'block'; }
 function renderTable(rows){
@@ -690,7 +696,15 @@ function recalc(reset=true){const rows=filteredRows(); if(reset) page=0; renderS
 document.addEventListener("change",(e)=>{ if(e.target.matches("#f-year")){ rebuildMonthDayOptions(); rebuildOtherFiltersFromDate(); recalc(); }});
 $("#prev").addEventListener('click',()=>{const f=filteredRows(); if(page>0){page--; renderTable(f);}});
 $("#next").addEventListener('click',()=>{const f=filteredRows(); if((page+1)*PAGE_SIZE<f.length){page++; renderTable(f);}});
-document.addEventListener('click',(e)=>{const btn=e.target.closest('.cap-reset'); if(!btn) return; const forId=btn.getAttribute('data-for'); if(forId?.startsWith('multi-')){const key=forId.replace('multi-',''); if(MULTI[key]){MULTI[key].clear(); if(key==='month') rebuildMonthDayOptions(); rebuildOtherFiltersFromDate(); recalc();}} else {const sel=document.getElementById(forId); if(!sel) return; sel.value=''; rebuildMonthDayOptions(); rebuildOtherFiltersFromDate(); recalc();}});
+document.addEventListener('click',(e)=>{
+  const btn=e.target.closest('.cap-reset'); if(!btn) return;
+  const forId=btn.getAttribute('data-for');
+  if(forId?.startsWith('multi-')){
+    const key=forId.replace('multi-',''); if(MULTI[key]){MULTI[key].clear(); if(key==='month') rebuildMonthDayOptions(); rebuildOtherFiltersFromDate(); recalc();}
+  } else {
+    const sel=document.getElementById(forId); if(!sel) return; sel.value=''; rebuildMonthDayOptions(); rebuildOtherFiltersFromDate(); recalc();
+  }
+});
 document.getElementById('filters').addEventListener('click',(e)=>{const cap=e.target.closest('.capsule[data-multi="true"]'); if(!cap) return; const key=cap.getAttribute('data-key'); if(!key) return; openMultiPanel(key,cap);});
 const sidebarEl=$("#filterSidebar"); const toggleBtn=$("#filterToggle");
 if(toggleBtn&&sidebarEl){ toggleBtn.addEventListener('click',()=>{ const open=sidebarEl.classList.toggle('open'); toggleBtn.setAttribute('aria-expanded', open?'true':'false'); }); }
@@ -712,7 +726,7 @@ async function loadDataset(dsKey){
   for(const name of cfg.sheets){
     try{
       const url = gvizCsv(cfg.id, name);
-      const text = await tryFetchCsv(url);
+      const text = await tryFetchCsvFast(url);
       const parsed = await parseCsvToRows(text);
       if(!parsed.rows.length) { lastErr = new Error('CSV kosong'); continue; }
       return { fields: parsed.headers, NAME_MAP: parsed.MAP, rows: parsed.rows, via:`gviz:${name}` };
@@ -732,22 +746,22 @@ async function boot(initial='nasional'){
   try{
     setActiveDsButton(initial);
     const result=await loadDataset(initial);
-    if(!result.rows.length){ showLoaderError("Tidak ada data pada sheet/CSV."); hideLoader(); DATA_LOADED=true; return; }
-    applyData(result); hideLoader(); DATA_LOADED=true;
+    if(!result.rows.length){ showNotice("Tidak ada data pada sheet/CSV."); hideLoader(); DATA_LOADED=true; return; }
+    applyData(result); DATA_LOADED=true;
   } catch(err){
     console.error(err);
-    showLoaderError(`Gagal memuat data: ${String(err.message||err)}`);
+    showNotice(`Gagal memuat data (${initial}). Cek: akses publik spreadsheet & nama sheet "Responses". Detail: ${String(err.message||err)}`);
+  } finally{
+    hideLoader(); // pastikan loader selalu tertutup
   }
 }
-// NOTE: boot() sekarang dipanggil SETELAH LOGIN, bukan otomatis di sini.
-// boot(CURRENT_DS);
 
 document.querySelectorAll('.ds-btn').forEach(btn=>{
   btn.addEventListener('click', async ()=>{
     const key=btn.getAttribute('data-ds'); if(key===CURRENT_DS) return; CURRENT_DS=key;
     showLoader(); $("#loader-sub").textContent=`Mengambil data ${DS[key].label}…`;
-    try{ setActiveDsButton(key); const res=await loadDataset(key); applyData(res); }
-    catch(e){ console.error(e); showLoaderError(`Gagal memuat data ${DS[key].label}: ${String(e.message||e)}`); }
+    try{ setActiveDsButton(key); const res=await loadDataset(key); applyData(res); showNotice(""); }
+    catch(e){ console.error(e); showNotice(`Gagal memuat data ${DS[key].label}. Cek setting Google Sheet (public viewer) & sheet "Responses". Detail: ${String(e.message||e)}`); }
     finally{ hideLoader(); }
   });
 });
@@ -765,11 +779,17 @@ document.getElementById('download').addEventListener('click',()=>{
 (function init(){
   const sess = localStorage.getItem('pipeline_user');
   if(sess){
-    onLogin(true); // sudah login, langsung load data
+    onLogin(true);
   }else{
-    showAuth();    // tampilkan layar login
+    showAuth();
   }
 })();
 </script>
 </body>
 </html>
+"""
+
+with open("/mnt/data/index-fast.html", "w", encoding="utf-8") as f:
+    f.write(html)
+
+"/mnt/data/index-fast.html"
