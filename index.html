@@ -39,7 +39,7 @@ box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(0,0,0,.12),0 2
 .layout{display:grid;grid-template-columns:220px 1fr;gap:16px;padding:16px;align-items:start}
 .content{min-width:0}
 .sidebar{position:sticky;top:70px;align-self:start;background:var(--muted);border-radius:14px;box-shadow:0 2px 10px rgba(0,0,0,.06);overflow:hidden}
-.sidebar-head{background:var(--head-bg);color:var(--head-fg);padding:12px 14px;font-weight:700;letter-spacing:.01em}
+.sidebar-head{background:var(--head-bg);color:var(--head-fg);padding:12px 14px;font-weight:700}
 .sidebar-body{padding:12px}
 .filter-toggle{display:none;align-items:center;gap:10px;width:fit-content;margin:12px 12px 8px 12px;padding:10px 14px;background:var(--brand);color:#fff;border:none;border-radius:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.12)}
 .filter-toggle .bars{position:relative;width:18px;height:12px}
@@ -217,7 +217,7 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
       <button class="ds-btn" data-ds="onsite">Onsite</button>
       <button class="ds-btn" data-ds="adira">Adira</button>
       <button class="ds-btn" data-ds="extad">EX TAD</button>
-      <button class="ds-btn" data-ds="booltools">Job Profiling</button>
+      <button class="ds-btn" data-ds="booltools">Boolean Tools</button>
     </div>
     <div class="ds-fade right"></div>
   </div>
@@ -316,11 +316,11 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
 
       <!-- Special page (iframe) -->
       <section id="specialPage" class="section" style="display:none">
-        <div id="specialTitle" class="section-head">Job Profiling</div>
+        <div id="specialTitle" class="section-head">Boolean Tools</div>
         <div class="block">
           <div class="special-container">
             <div class="iframe-wrap">
-              <iframe id="specialFrame" src="" title="Job Profiling" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+              <iframe id="specialFrame" src="" title="Boolean Tools" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
             </div>
           </div>
         </div>
@@ -395,9 +395,7 @@ const DS = {
   extad:   {label:"EX TAD",   id:"1MpZvsXCJcQWrw6SkpvM9wgPlSXdxjnDRcOfV7dJ_BgE", sheets:["Responses","Form Responses 1","Sheet1"]},
 };
 /* Special (iframe) tabs */
-const SPECIAL = {
-  booltools: { label: "Job Profiling", url: "https://sourcingsimgroup.github.io/jobprofile/" }
-};
+const SPECIAL = { booltools: { label: "Boolean Tools", url: "https://sourcingsimgroup.github.io/jobprofile/" } };
 
 /* ===== Robust fetch ===== */
 const WRAPS = [
@@ -479,12 +477,46 @@ let OPTIONS={month:[],day:[],minat:[],peng:[],pend:[],prov:[],kota:[]};
 let MULTI={month:new Set(),day:new Set(),minat:new Set(),peng:new Set(),pend:new Set(),prov:new Set(),kota:new Set(),searchJobs:new Set()};
 let JOB_OPTS=[];
 
-const $=s=>document.querySelector(s);
-const norm=s=>String(s||"").replace(/[\u200B-\u200D\uFEFF]/g,"").toUpperCase().replace(/\s+/g," ").trim();
-const mapHeader=name=> NAME_MAP[norm(name)] || NAME_MAP[norm(ALIASES[name]||"")] || name;
-const get=(row,label)=>{ const actual = COL_MAP[label] || mapHeader(label); return row[ actual ] ?? ""; };
+/* ===== Utils (super tolerant mapping) ===== */
+const $ = s => document.querySelector(s);
+const norm = s => String(s ?? "")
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')            // remove accents
+  .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ')                 // zero-width & NBSP
+  .toUpperCase()
+  .replace(/[^A-Z0-9 ]+/g, ' ')                                 // strip punctuation
+  .replace(/\s+/g, ' ')
+  .trim();
 
-/* ===== Utils ===== */
+// find header in HEADERS for a given label (synonyms + fuzzy tokens)
+function findHeader(label){
+  if(!label) return null;
+  const candLabels = [ label, ALIASES[label] || null, ...(SYNONYMS[label] || []) ].filter(Boolean);
+
+  for(const lab of candLabels){
+    const hit = NAME_MAP[norm(lab)];
+    if(hit) return hit;
+  }
+  const want = norm(label).split(' ').filter(Boolean);
+  let best = null, bestScore = 0;
+  for(const h of HEADERS){
+    const toks = norm(h).split(' ').filter(Boolean);
+    const overlap = want.filter(t => toks.includes(t)).length;
+    const score = overlap / Math.max(1, want.length);
+    if(score > bestScore){ bestScore = score; best = h; }
+  }
+  return (bestScore >= 0.6) ? best : null;
+}
+
+// mapHeader wrapper
+const mapHeader = (name) => findHeader(name) || name;
+
+// get cell with robust fallback
+const get=(row,label)=>{
+  const key = COL_MAP[label] || findHeader(label) || findHeader(ALIASES[label]||'') || label;
+  return row[key] ?? "";
+};
+
+/* ===== Helpers ===== */
 function hideLoader(){const el=$("#loader");if(!el) return;el.style.opacity="0";el.style.transition="opacity .25s ease";setTimeout(()=>{el.style.display="none";document.body.classList.add("ready");},250)}
 function showLoader(){const el=$("#loader"); if(!el) return; document.body.classList.remove('ready'); el.style.display='flex'; el.style.opacity='1';}
 function showLoaderError(msg){$("#loader-sub").textContent=msg||"Gagal memuat data."}
@@ -496,33 +528,19 @@ function computeAge(dob){const p=parseDateParts(dob); if(!p) return ""; const t=
 /* ===== Column resolver ===== */
 function buildColMap(){
   COL_MAP = {};
-  const headerNorms = new Set(HEADERS.map(h=>norm(h)));
-  TABLE_DISPLAY_COLUMNS.forEach(label=>{
-    let target = null;
-    const cand = (SYNONYMS[label]||[label,ALIASES[label]]).filter(Boolean);
-    for(const c of cand){
-      const n = norm(c);
-      if(headerNorms.has(n)){ target = HEADERS.find(h=>norm(h)===n); break; }
-    }
-    if(!target){
-      const tokens = norm(label).split(" ").filter(Boolean);
-      const candidates = HEADERS.map(h=>({h, n:norm(h)}));
-      for(const {h,n} of candidates){
-        const hit = tokens.filter(t=>n.includes(t)).length;
-        if(hit >= Math.max(2, Math.ceil(tokens.length*0.6))) { target = h; break; }
-      }
-    }
-    if(!target){
-      const nlabel = norm(label).replace(/[^\w ]/g,"");
-      target = HEADERS.find(h => norm(h).replace(/[^\w ]/g,"")===nlabel);
-    }
-    if(target){ COL_MAP[label] = target; }
-  });
-  const unresolved = TABLE_DISPLAY_COLUMNS.filter(lbl=>!COL_MAP[lbl]);
+  // reset warning box setiap kali
   const box=document.getElementById('dsCheck');
+  if(box){ box.style.display='none'; box.innerHTML=''; }
+
+  TABLE_DISPLAY_COLUMNS.forEach(label=>{
+    const target = findHeader(label);
+    if(target) COL_MAP[label] = target;
+  });
+
+  const unresolved = TABLE_DISPLAY_COLUMNS.filter(lbl=>!COL_MAP[lbl]);
   if(unresolved.length && box){
     box.style.display='block';
-    box.innerHTML += `<div style="margin-top:8px;padding:6px;border-radius:8px;background:#fff;border:1px dashed #f59e0b">
+    box.innerHTML = `<div style="margin-top:8px;padding:6px;border-radius:8px;background:#fff;border:1px dashed #f59e0b">
       <b>Peringatan kolom belum cocok:</b> ${unresolved.join(", ")}
     </div>`;
   }
@@ -579,11 +597,13 @@ function rebuildJobOptions(){
   const rows=subsetByDate();
   const set=new Set();
   if(CURRENT_DS==='extad'){
+    // EX TAD: ambil dari Pengalaman Kerja Terakhir
     rows.forEach(r=>{
       const v=String(get(r, FILTER_MAP.peng)||"").trim();
       if(v) set.add(v);
     });
   }else{
+    // dataset lain: ambil dari Minat Posisi 1/2/3
     rows.forEach(r=>{
       "MINAT POSISI KERJA PERTAMA,MINAT POSISI KERJA KEDUA,MINAT POSISI KERJA KETIGA".split(',').forEach(col=>{
         const v=String(get(r,col)||"").trim();
@@ -820,9 +840,12 @@ function exitSpecial(){
 /* ===== Fetch & parse ===== */
 async function parseCsvToRows(csvText){
   const parsed = Papa.parse(csvText.replace(/^\uFEFF/,''), { header: true, skipEmptyLines: 'greedy' });
-  const headers = (parsed.meta.fields||[]).map(h=>String(h||'').replace(/[\u200B-\u200D\uFEFF]/g,''));
-  const rows    = (parsed.data||[]).map(r=>{const o={}; headers.forEach(h=> o[h]=r[h]); return o;});
-  const MAP={}; headers.forEach(h=> MAP[norm(h)]=h);
+  // bersihkan header dari zero-width & NBSP, rapikan spasi
+  const headers = (parsed.meta.fields||[])
+    .map(h => String(h||'').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').replace(/\s+/g,' ').trim());
+  const rows = (parsed.data||[]).map(r => { const o={}; headers.forEach(h => o[h]=r[h]); return o; });
+  // NAME_MAP: norm(header) -> header asli
+  const MAP={}; headers.forEach(h => MAP[norm(h)] = h);
   if(!headers.length) throw new Error('Header tidak terbaca (cek akses publik & nama sheet).');
   return { headers, rows, MAP };
 }
@@ -841,6 +864,10 @@ async function loadDataset(dsKey){
   throw new Error(`Gagal muat: ${cfg.label} — ${lastErr ? lastErr.message : 'unknown'}`);
 }
 function applyData(result){
+  // bersihkan warning box
+  const box = document.getElementById('dsCheck');
+  if(box){ box.style.display='none'; box.innerHTML=''; }
+
   HEADERS=result.fields; NAME_MAP=result.NAME_MAP; ROWS=result.rows;
   page=0; for(const k of Object.keys(MULTI)) MULTI[k].clear(); $("#f-year").value='';
   buildColMap(); buildYearOptions(); rebuildMonthDayOptions(); rebuildOtherFiltersFromDate(); updateCapsuleValues(); recalc();
