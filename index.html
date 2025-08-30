@@ -97,6 +97,8 @@ tbody td{padding:8px;border-bottom:1px solid #eee;font-size:13px;vertical-align:
 thead th.sticky-col,tbody td.sticky-col{position:sticky;left:0;background-clip:padding-box}
 thead th.sticky-col{z-index:30;background:var(--head-bg)}
 tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8px -6px rgba(0,0,0,.18)}
+
+/* mobile tweaks */
 @media (max-width:900px){.layout{grid-template-columns:220px 1fr}}
 @media (max-width:640px){
   .header{padding:10px 12px}
@@ -159,6 +161,11 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
   .special-container{ width:100%; padding:0 12px; }
   .iframe-wrap iframe{ height: calc(100vh - 180px); }
 }
+
+/* ===== NEW: Collapse grid to single column when special page active ===== */
+.layout.single { grid-template-columns: 1fr; }
+.layout.single .content { grid-column: 1 / -1; }
+.layout.single .sidebar { display: none !important; }
 </style>
 </head>
 <body>
@@ -779,15 +786,20 @@ if(toggleBtn&&sidebarEl){ toggleBtn.addEventListener('click',()=>{ const open=si
 const isMobileView=()=>window.matchMedia('(max-width: 640px)').matches;
 document.addEventListener('change',(e)=>{ if(isMobileView()&&e.target.closest('#filters')){ setTimeout(()=>{ sidebarEl.classList.remove('open'); if(toggleBtn) toggleBtn.setAttribute('aria-expanded','false'); },80);} });
 
-/* ===== Special page handler ===== */
+/* ===== Special page handler (with single-column layout) ===== */
 function enterSpecial(key){
   const spec=SPECIAL[key]; if(!spec) return;
   setActiveDsButton(key);
+
+  // collapse grid to single column
+  document.querySelector('.layout').classList.add('single');
+
   // Hide dataset UI
   document.getElementById('filterSidebar').style.display='none';
   document.getElementById('sectionSummary').style.display='none';
   document.querySelector('.toolbar').style.display='none';
   document.getElementById('sectionTable').style.display='none';
+
   // Show iframe
   document.getElementById('specialTitle').textContent = spec.label;
   const frame=document.getElementById('specialFrame');
@@ -795,6 +807,9 @@ function enterSpecial(key){
   document.getElementById('specialPage').style.display='block';
 }
 function exitSpecial(){
+  // restore grid
+  document.querySelector('.layout').classList.remove('single');
+
   document.getElementById('filterSidebar').style.display='';
   document.getElementById('sectionSummary').style.display='';
   document.querySelector('.toolbar').style.display='';
