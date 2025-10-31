@@ -8,7 +8,7 @@
 <style>
 :root{ --brand:#3F704D; --bg:#fff; --ink:#212121; --muted:#f3f4f6; --line:#e5e7eb; --danger:#d72638; --gray:#9ca3af; --head-bg:#222624; --head-fg:#e1e8e5; --name-col-w:260px;}
 @media (max-width:640px){ :root{ --name-col-w:160px; } }
-*{box-sizing:border-box} html,body{Width:100%;max-width:100%;overflow-x:hidden}
+*{box-sizing:border-box} html,body{width:100%;max-width:100%;overflow-x:hidden}
 body{margin:0;font-family:Montserrat,system-ui,Arial,sans-serif;color:var(--ink);background:var(--bg)}
 .loading-screen{position:fixed;inset:0;z-index:9999;background:#0f1720;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px}
 .loading-logo{color:#E6EDF3;letter-spacing:.15em;text-transform:uppercase;font-weight:800;font-size:clamp(26px,5vw,42px);animation:blink 1.1s ease-in-out infinite}
@@ -212,7 +212,7 @@ tbody td.sticky-col{z-index:25;background:#fff;box-shadow:4px 0 0 0 #fff,6px 0 8
   <div class="ds-bar" aria-label="Sumber data">
     <div class="ds-fade left"></div>
     <div class="ds-scroll ds-switch" role="tablist">
-      <button class="ds-btn" data-ds="nasional" aria-selected="true">Nasional</button
+      <button class="ds-btn" data-ds="nasional" aria-selected="true">Nasional</button>
       <button class="ds-btn" data-ds="onsite">Onsite</button>
       <button class="ds-btn" data-ds="adira">Adira</button>
       <button class="ds-btn" data-ds="extad">EX TAD</button>
@@ -397,12 +397,18 @@ const SPECIAL = { booltools: { label: "Job Profiling", url: "https://sourcingsim
 
 /* ===== Robust fetch ===== */
 const WRAPS = [
+  // 1) Direct (CORS must be allowed by target)
   u => u,
-  u => 'https://r.jina.ai/http://' + u.replace(/^https?:\/\//,'') ,
-  u => 'https://r.jina.ai/http/'  + u.replace(/^https?:\/\//,'') ,
+  // 2) r.jina.ai with explicit https upstream
+  u => 'https://r.jina.ai/http/https://' + u.replace(/^https?:\/\//,''),
+  // 3) r.jina.ai with explicit http upstream (some endpoints only over http)
+  u => 'https://r.jina.ai/http/http://' + u.replace(/^https?:\/\//,''),
+  // 4) r.jina.ai path passthrough (no protocol)
+  u => 'https://r.jina.ai/http/'  + u.replace(/^https?:\/\//,''),
+  // 5) isomorphic-git CORS proxy
   u => 'https://cors.isomorphic-git.org/' + u
 ];
-const FETCH_TIMEOUT_MS = 7500;
+const FETCH_TIMEOUT_MS = 12000;
 function looksLikeHtml(text){ return /<\s*html|<!doctype/i.test(text); }
 async function fetchWithTimeout(url, opt={}, ms=FETCH_TIMEOUT_MS){
   const ctrl = new AbortController();
@@ -413,7 +419,7 @@ async function fetchWithTimeout(url, opt={}, ms=FETCH_TIMEOUT_MS){
 async function tryFetchCsv(url){
   let lastErr = null;
   for(const wrap of WRAPS){
-    const full = wrap(url) + (wrap===WRAPS[3] ? '' : (url.includes('?')?'&':'?') + '_=' + Date.now());
+    const full = wrap(url) + (wrap===WRAPS[4] ? '' : (url.includes('?')?'&':'?') + '_=' + Date.now());
     try{
       const r = await fetchWithTimeout(full);
       if(!r.ok) { lastErr = new Error('HTTP ' + r.status); continue; }
@@ -447,7 +453,7 @@ const FILTER_MAP={
   peng:"PENGALAMAN KERJA TERAKHIR",pend:"PENDIDIKAN TERAKHIR",prov:"PROVINSI MINAT PENEMPATAN",kota:"KOTA MINAT PENEMPATAN",
   durasi:"DURASI PENGALAMAN KERJA"
 };
-/* ALIASES: tambahkan mapping sehingga label tampil "Provinsi Dom" tapi pemetaan sumber tetap kolom "KELURAHAN" */
+/* ALIASES */
 const ALIASES={"NAMA LENGKAP":"NAMA LENGKAP (SESUAI KTP)","TIMESTAMP":"Timestamp","UPLOAD CV":"UPLOAD CV / PORTOFOLIO","Provinsi Dom":"Provinsi Dom"};
 const SYNONYMS={
  "NAMA LENGKAP":["NAMA LENGKAP (SESUAI KTP)","NAMA LENGKAP"],
@@ -477,21 +483,19 @@ let OPTIONS={month:[],day:[],minat:[],peng:[],pend:[],prov:[],kota:[]};
 let MULTI={month:new Set(),day:new Set(),minat:new Set(),peng:new Set(),pend:new Set(),prov:new Set(),kota:new Set(),searchJobs:new Set()};
 let JOB_OPTS=[];
 
-/* ===== Utils (super tolerant mapping) ===== */
+/* ===== Utils ===== */
 const $ = s => document.querySelector(s);
 const norm = s => String(s ?? "")
-  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')            // remove accents
-  .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ')                 // zero-width & NBSP
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ')
   .toUpperCase()
-  .replace(/[^A-Z0-9 ]+/g, ' ')                                 // strip punctuation
+  .replace(/[^A-Z0-9 ]+/g, ' ')
   .replace(/\s+/g, ' ')
   .trim();
 
-// find header in HEADERS for a given label (synonyms + fuzzy tokens)
 function findHeader(label){
   if(!label) return null;
   const candLabels = [ label, ALIASES[label] || null, ...(SYNONYMS[label] || []) ].filter(Boolean);
-
   for(const lab of candLabels){
     const hit = NAME_MAP[norm(lab)];
     if(hit) return hit;
@@ -506,11 +510,7 @@ function findHeader(label){
   }
   return (bestScore >= 0.6) ? best : null;
 }
-
-// mapHeader wrapper
 const mapHeader = (name) => findHeader(name) || name;
-
-// get cell with robust fallback
 const get=(row,label)=>{
   const key = COL_MAP[label] || findHeader(label) || findHeader(ALIASES[label]||'') || label;
   return row[key] ?? "";
@@ -528,15 +528,12 @@ function computeAge(dob){const p=parseDateParts(dob); if(!p) return ""; const t=
 /* ===== Column resolver ===== */
 function buildColMap(){
   COL_MAP = {};
-  // reset warning box setiap kali
   const box=document.getElementById('dsCheck');
   if(box){ box.style.display='none'; box.innerHTML=''; }
-
   TABLE_DISPLAY_COLUMNS.forEach(label=>{
     const target = findHeader(label);
     if(target) COL_MAP[label] = target;
   });
-
   const unresolved = TABLE_DISPLAY_COLUMNS.filter(lbl=>!COL_MAP[lbl]);
   if(unresolved.length && box){
     box.style.display='block';
@@ -597,13 +594,11 @@ function rebuildJobOptions(){
   const rows=subsetByDate();
   const set=new Set();
   if(CURRENT_DS==='extad'){
-    // EX TAD: ambil dari Pengalaman Kerja Terakhir
     rows.forEach(r=>{
       const v=String(get(r, FILTER_MAP.peng)||"").trim();
       if(v) set.add(v);
     });
   }else{
-    // dataset lain: ambil dari Minat Posisi 1/2/3
     rows.forEach(r=>{
       "MINAT POSISI KERJA PERTAMA,MINAT POSISI KERJA KEDUA,MINAT POSISI KERJA KETIGA".split(',').forEach(col=>{
         const v=String(get(r,col)||"").trim();
@@ -768,7 +763,6 @@ function renderTable(rows){
     const tr=document.createElement("tr");
     TABLE_DISPLAY_COLUMNS.forEach((label,idx)=>{
       const td=document.createElement("td");
-      // Ambil value dari column mapping — ingat "Provinsi Dom" dialihkan ke "Provinsi Dom" lewat ALIASES
       const v=get(r,label) || get(r, ALIASES[label]||label);
       if(idx===0) td.classList.add('sticky-col','cell-name','col-name');
       if(/UPLOAD|CV/i.test(label)){
@@ -812,25 +806,20 @@ function enterSpecial(key){
   const spec=SPECIAL[key]; if(!spec) return;
   setActiveDsButton(key);
 
-  // collapse grid to single column
   document.querySelector('.layout').classList.add('single');
 
-  // Hide dataset UI
   document.getElementById('filterSidebar').style.display='none';
   document.getElementById('sectionSummary').style.display='none';
   document.querySelector('.toolbar').style.display='none';
   document.getElementById('sectionTable').style.display='none';
 
-  // Show iframe
   document.getElementById('specialTitle').textContent = spec.label;
   const frame=document.getElementById('specialFrame');
   if(frame.src!==spec.url) frame.src=spec.url;
   document.getElementById('specialPage').style.display='block';
 }
 function exitSpecial(){
-  // restore grid
   document.querySelector('.layout').classList.remove('single');
-
   document.getElementById('filterSidebar').style.display='';
   document.getElementById('sectionSummary').style.display='';
   document.querySelector('.toolbar').style.display='';
@@ -841,11 +830,9 @@ function exitSpecial(){
 /* ===== Fetch & parse ===== */
 async function parseCsvToRows(csvText){
   const parsed = Papa.parse(csvText.replace(/^\uFEFF/,''), { header: true, skipEmptyLines: 'greedy' });
-  // bersihkan header dari zero-width & NBSP, rapikan spasi
   const headers = (parsed.meta.fields||[])
     .map(h => String(h||'').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').replace(/\s+/g,' ').trim());
   const rows = (parsed.data||[]).map(r => { const o={}; headers.forEach(h => o[h]=r[h]); return o; });
-  // NAME_MAP: norm(header) -> header asli
   const MAP={}; headers.forEach(h => MAP[norm(h)] = h);
   if(!headers.length) throw new Error('Header tidak terbaca (cek akses publik & nama sheet).');
   return { headers, rows, MAP };
@@ -865,7 +852,6 @@ async function loadDataset(dsKey){
   throw new Error(`Gagal muat: ${cfg.label} — ${lastErr ? lastErr.message : 'unknown'}`);
 }
 function applyData(result){
-  // bersihkan warning box
   const box = document.getElementById('dsCheck');
   if(box){ box.style.display='none'; box.innerHTML=''; }
 
