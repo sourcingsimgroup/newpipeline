@@ -395,15 +395,10 @@ const SPECIAL = { booltools: { label: "Job Profiling", url: "https://sourcingsim
 
 /* ===== Robust fetch ===== */
 const WRAPS = [
-  // 1) Direct (CORS must be allowed by target)
   u => u,
-  // 2) r.jina.ai with explicit https upstream
   u => 'https://r.jina.ai/http/https://' + u.replace(/^https?:\/\//,''),
-  // 3) r.jina.ai with explicit http upstream (some endpoints only over http)
   u => 'https://r.jina.ai/http/http://' + u.replace(/^https?:\/\//,''),
-  // 4) r.jina.ai path passthrough (no protocol)
   u => 'https://r.jina.ai/http/'  + u.replace(/^https?:\/\//,''),
-  // 5) isomorphic-git CORS proxy
   u => 'https://cors.isomorphic-git.org/' + u
 ];
 const FETCH_TIMEOUT_MS = 12000;
@@ -431,7 +426,6 @@ async function tryFetchCsv(url){
 const gvizCsv = (id, sheet) => `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}`;
 
 /* ===== Columns ===== */
-/* NOTE: label "KELURAHAN" ditampilkan sebagai "Provinsi Dom" — data mapping tetap ke kolom asli "KELURAHAN" */
 const TABLE_DISPLAY_COLUMNS=[
   "NAMA LENGKAP","TANGGAL LAHIR","NOMOR WA AKTIF","NOMOR HP AKTIF","JENIS KELAMIN",
   "PENGALAMAN KERJA TERAKHIR","DURASI PENGALAMAN KERJA","MINAT POSISI KERJA PERTAMA",
@@ -647,51 +641,111 @@ function updateJobSearchLabel(){
 }
 
 /* ===== Job suggest & multi panels ===== */
-let openPanel=null; let panelShown=[];
+let openPanel=null;
 const isMobile=()=>window.matchMedia('(max-width: 640px)').matches;
-function minChars(key){return (key==='month'||key==='day')?1:3;}
-function closePanel(){if(openPanel){openPanel.remove();openPanel=null;}}
+function closePanel(){ if(openPanel){ openPanel.remove(); openPanel=null; } }
+
+// REVISI: Panel multi-select dengan search + lazy load (10 item awal, scroll untuk lebih)
 function openMultiPanel(key,anchorEl){
   closePanel();
+
   const panel=document.createElement('div'); panel.className='multi-panel'; if(isMobile()) panel.classList.add('mobile');
   if(!isMobile()){const rect=anchorEl.getBoundingClientRect(); panel.style.left=Math.min(Math.max(8,rect.left),window.innerWidth-380)+'px'; panel.style.top=(rect.bottom+6)+'px';}
-  const search=document.createElement('input'); search.type='search'; search.className='panel-search'; search.placeholder=`Ketik minimal ${minChars(key)} huruf…`;
-  const tip=document.createElement('div'); tip.className='multi-tip'; tip.textContent=`Ketik minimal ${minChars(key)} huruf untuk menampilkan opsi & “Pilih semua”.`;
-  const list=document.createElement('div'); panel.appendChild(search); panel.appendChild(tip); panel.appendChild(list);
-  const allOpts=(OPTIONS[key]||[]).slice(); const labelOf=v=> key==='month'? MONTH_NAMES[(+v)-1] : String(v);
-  function render(q=''){
-    list.innerHTML=''; const needle=(q||'').trim().toLowerCase(); let shown=[];
-    if(needle.length>=minChars(key)){
-      shown=allOpts.filter(v=> labelOf(v).toLowerCase().includes(needle) ); tip.style.display='none';
-      if(shown.length){
-        const allRow=document.createElement('label'); allRow.className='multi-selectall';
-        const cb=document.createElement('input'); cb.type='checkbox';
-        const allChecked=shown.every(v=>MULTI[key].has(v)), some=shown.some(v=>MULTI[key].has(v));
-        cb.checked=allChecked; if(!allChecked && some) cb.indeterminate=true;
-        const span=document.createElement('span'); span.textContent=`Pilih semua (${shown.length}) yang cocok`;
-        allRow.appendChild(cb); allRow.appendChild(span);
-        cb.addEventListener('change',()=>{ if(cb.checked){shown.forEach(v=>MULTI[key].add(v));} else{shown.forEach(v=>MULTI[key].delete(v));}
-          if(key==='month') rebuildMonthDayOptions(); if(['minat','month','day'].includes(key)) rebuildOtherFiltersFromDate(); recalc(false); updateCapsuleValues(); closePanel(); });
-        list.appendChild(allRow);
-      }
-    }else{ tip.style.display='block'; }
-    panelShown=shown.slice();
-    shown.sort((a,b)=> (key==='month'||key==='day')?((+a)-(+b)):String(a).localeCompare(String(b))).forEach(v=>{
-      const wrap=document.createElement('label'); wrap.className='multi-item';
-      wrap.innerHTML=`<input type="checkbox"> <span style="font-size:12px">${labelOf(v)}</span>`;
-      const cb=wrap.querySelector('input'); cb.checked=MULTI[key].has(v);
-      cb.addEventListener('change',()=>{ if(cb.checked) MULTI[key].add(v); else MULTI[key].delete(v);
-        if(key==='month') rebuildMonthDayOptions(); if(['minat','month','day'].includes(key)) rebuildOtherFiltersFromDate(); recalc(false); updateCapsuleValues(); closePanel(); });
-      list.appendChild(wrap);
-    });
-  }
-  render();
-  search.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ const q=search.value.trim(); if(q.length>=minChars(key) && panelShown.length){panelShown.forEach(v=>MULTI[key].add(v)); if(key==='month') rebuildMonthDayOptions(); if(['minat','month','day'].includes(key)) rebuildOtherFiltersFromDate(); recalc(); } closePanel(); e.preventDefault(); }});
-  search.addEventListener('input',()=>render(search.value));
+
+  const search=document.createElement('input'); search.type='search'; search.className='panel-search'; search.placeholder='Ketik untuk memfilter…';
+  const list=document.createElement('div');
+
+  panel.appendChild(search); panel.appendChild(list);
   document.body.appendChild(panel); openPanel=panel;
+
+  const allOpts=(OPTIONS[key]||[]).slice();
+  const labelOf=v=> key==='month'? MONTH_NAMES[(+v)-1] : String(v);
+  const sortFn=(a,b)=> (key==='month'||key==='day') ? ((+a)-(+b)) : String(a).localeCompare(String(b));
+
+  let filtered = allOpts.slice().sort(sortFn);
+  let rendered = 0;
+  const CHUNK = 10;
+
+  // Select-all row (tetap di atas)
+  const rowAll=document.createElement('label'); rowAll.className='multi-selectall';
+  const cbAll=document.createElement('input'); cbAll.type='checkbox';
+  const spanAll=document.createElement('span'); spanAll.textContent = `Pilih semua (${filtered.length})`;
+  rowAll.appendChild(cbAll); rowAll.appendChild(spanAll);
+  list.appendChild(rowAll);
+
+  function updateSelectAllState(){
+    const allChecked = filtered.length>0 && filtered.every(v=>MULTI[key].has(v));
+    const someChecked = filtered.some(v=>MULTI[key].has(v));
+    cbAll.indeterminate = !allChecked && someChecked;
+    cbAll.checked = allChecked && !cbAll.indeterminate;
+    spanAll.textContent = `Pilih semua (${filtered.length})`;
+  }
+
+  cbAll.addEventListener('change',()=>{
+    if(cbAll.checked){ filtered.forEach(v=>MULTI[key].add(v)); }
+    else { filtered.forEach(v=>MULTI[key].delete(v)); }
+    if(key==='month') rebuildMonthDayOptions();
+    if(['minat','month','day'].includes(key)) rebuildOtherFiltersFromDate();
+    recalc(false);
+    updateCapsuleValues();
+    closePanel();
+  });
+
+  function createItem(v){
+    const wrap=document.createElement('label'); wrap.className='multi-item';
+    wrap.innerHTML=`<input type="checkbox"> <span style="font-size:12px">${labelOf(v)}</span>`;
+    const cb=wrap.querySelector('input'); cb.checked=MULTI[key].has(v);
+    cb.addEventListener('change',()=>{
+      if(cb.checked) MULTI[key].add(v); else MULTI[key].delete(v);
+      if(key==='month') rebuildMonthDayOptions();
+      if(['minat','month','day'].includes(key)) rebuildOtherFiltersFromDate();
+      recalc(false);
+      updateCapsuleValues();
+      updateSelectAllState();
+    });
+    return wrap;
+  }
+
+  function appendChunk(){
+    const end = Math.min(filtered.length, rendered + CHUNK);
+    for(let i=rendered;i<end;i++){ list.appendChild(createItem(filtered[i])); }
+    rendered = end;
+    if(filtered.length===0){
+      const empty=document.createElement('div'); empty.className='multi-tip'; empty.textContent='Tidak ada hasil.'; list.appendChild(empty);
+    }
+    updateSelectAllState();
+  }
+
+  function resetList(){
+    list.querySelectorAll('.multi-item, .multi-tip').forEach(el=>el.remove());
+    rendered = 0;
+    appendChunk();
+  }
+
+  // Lazy load saat scroll mendekati bawah
+  list.addEventListener('scroll',()=>{
+    const nearBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 16;
+    if(nearBottom && rendered < filtered.length){ appendChunk(); }
+  });
+
+  // Render awal 10 item
+  appendChunk();
+
+  // Filter via search
+  function applyFilter(){
+    const needle=(search.value||'').trim().toLowerCase();
+    filtered = allOpts.filter(v => labelOf(v).toLowerCase().includes(needle)).sort(sortFn);
+    updateSelectAllState();
+    resetList();
+  }
+  search.addEventListener('input', applyFilter);
+
+  // Fokus + close ketika klik di luar
   setTimeout(()=>{search.focus(); document.addEventListener('mousedown', onDoc, {once:true, capture:true}); },0);
   function onDoc(e){ if(panel.contains(e.target)||anchorEl.contains(e.target)){ document.addEventListener('mousedown', onDoc, {once:true,capture:true}); return;} closePanel(); }
 }
+
+// Job suggest tetap seperti sebelumnya (opsional terpisah dari filter kapsul)
 function openJobSuggest(){
   const cont=$("#jobPanel"); cont.innerHTML="";
   const panel=document.createElement('div'); panel.className='multi-panel'; if(isMobile()) panel.classList.add('mobile');
@@ -704,7 +758,8 @@ function openJobSuggest(){
     list.innerHTML=''; const needle=(q||'').trim().toLowerCase();
     if(needle.length>=3){
       tip.style.display='none';
-      const shown=JOB_OPTS.filter(v=> String(v).toLowerCase().includes(needle) ); currentShown=shown.slice();
+      const shown=JOB_OPTS.filter(v=> String(v).toLowerCase().includes(needle) );
+      currentShown=shown.slice();
       if(shown.length){
         const row=document.createElement('label'); row.className='multi-selectall';
         const cb=document.createElement('input'); cb.type='checkbox';
